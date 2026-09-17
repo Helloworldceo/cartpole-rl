@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cart-Pole RL Lab — Tabular Q-Learning</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0e14;
+    --panel: #131826;
+    --panel-2: #1a2133;
+    --border: #262e42;
+    --text: #e7ebf3;
+    --text-dim: #8b93a7;
+    --accent: #c084fc;
+    --accent-2: #5eb0ff;
+    --good: #4ade80;
+    --bad: #f87171;
+    --mono: 'SF Mono', 'Fira Code', ui-monospace, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; padding: 20px; }
+  h1 { font-size: 20px; margin: 0 0 4px; font-weight: 700; }
+  .subtitle { color: var(--text-dim); font-size: 13px; margin: 0 0 6px; }
+  .callout { background: rgba(192,132,252,0.08); border: 1px solid rgba(192,132,252,0.3); border-radius: 10px; padding: 10px 14px; font-size: 12.5px; color: #d9c2fb; margin-bottom: 18px; line-height: 1.5; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.9fr); gap: 16px; max-width: 1280px; margin: 0 auto; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  .panel + .panel { margin-top: 16px; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 0 0 10px; font-weight: 700; }
+  canvas { display: block; width: 100%; border-radius: 8px; background: var(--panel-2); }
+  #simCanvas { height: 260px; }
+  #chartCanvas { height: 200px; margin-top: 10px; }
+  .status-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 13px; }
+  .status-pill { padding: 3px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; }
+  .status-ok { background: rgba(74,222,128,0.15); color: var(--good); }
+  .status-bad { background: rgba(248,113,113,0.15); color: var(--bad); }
+  .status-training { background: rgba(192,132,252,0.15); color: var(--accent); }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s ease; }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary { background: var(--accent); color: #0b0e14; border-color: var(--accent); }
+  button.primary:hover { filter: brightness(1.1); color: #0b0e14; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button:active:not(:disabled) { transform: scale(0.97); }
+  label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 2px; }
+  .slider-row { margin-bottom: 12px; }
+  .slider-row .val { float: right; font-family: var(--mono); color: var(--text); font-size: 12px; }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .readouts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-family: var(--mono); font-size: 12px; }
+  .readout { background: var(--panel-2); border-radius: 6px; padding: 8px 10px; border: 1px solid var(--border); }
+  .readout .k { color: var(--text-dim); display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .readout .v { font-size: 14px; font-weight: 600; }
+  details { margin-top: 14px; }
+  summary { cursor: pointer; font-size: 12px; color: var(--accent); font-weight: 600; user-select: none; }
+  details p { font-size: 12.5px; color: var(--text-dim); line-height: 1.55; }
+  code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); font-size: 11.5px; color: var(--accent-2); }
+  .legend { display: flex; gap: 14px; font-size: 11px; color: var(--text-dim); margin-top: 6px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+</style>
+</head>
+<body>
+
+<h1>Cart-Pole RL Lab</h1>
+<p class="subtitle">The same cart-pole benchmark, balanced by trial and error instead of a formula.</p>
+<div class="callout">
+  This is the same physical system as the <b>Cart-Pole Control Lab</b> project: LQR solved it instantly with zero trial-and-error using linear algebra on a known model of the physics. This agent has <i>no model at all</i> — it only sees a reward of +1 per surviving timestep, and has to discover a stabilizing policy purely from experience.
+</div>
+
+<div class="layout">
+  <div>
+    <div class="panel">
+      <div class="status-row">
+        <span id="statusPill" class="status-pill status-ok">Idle</span>
+        <span id="epReadout" style="color:var(--text-dim); font-family:var(--mono);">episode 0</span>
+      </div>
+      <canvas id="simCanvas" width="900" height="260"></canvas>
+      <div class="btn-row" style="margin-top:12px;">
+        <button id="btnTrain100">Train 100</button>
+        <button id="btnTrain1000" class="primary">Train 1,000</button>
+        <button id="btnTrain5000">Train 5,000</button>
+        <button id="btnTrain20000">Train 20,000</button>
+        <button id="btnStop" disabled>Stop</button>
+      </div>
+      <div class="btn-row">
+        <button id="btnWatch">▶ Watch trained agent</button>
+        <button id="btnResetQ">Reset Q-table</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Learning Curve — steps survived per episode</h2>
+      <canvas id="chartCanvas" width="900" height="200"></canvas>
+      <div class="legend">
+        <span><i class="dot" style="background:#3a4362"></i> raw episode length</span>
+        <span><i class="dot" style="background:#c084fc"></i> rolling average (20 ep)</span>
+        <span><i class="dot" style="background:#4ade80"></i> max possible (500)</span>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <h2>Hyperparameters</h2>
+      <div class="slider-row">
+        <label>Learning rate α <span class="val" id="alphaVal">0.20</span></label>
+        <input type="range" id="alpha" min="0.01" max="0.6" step="0.01" value="0.2" />
+      </div>
+      <div class="slider-row">
+        <label>Discount γ <span class="val" id="gammaVal">0.98</span></label>
+        <input type="range" id="gamma" min="0.8" max="0.999" step="0.001" value="0.98" />
+      </div>
+      <div class="slider-row">
+        <label>ε decay per episode <span class="val" id="decayVal">0.995</span></label>
+        <input type="range" id="decay" min="0.95" max="0.9995" step="0.0005" value="0.995" />
+      </div>
+      <div class="slider-row">
+        <label>ε minimum <span class="val" id="epsMinVal">0.02</span></label>
+        <input type="range" id="epsMin" min="0" max="0.3" step="0.01" value="0.02" />
+      </div>
+
+      <h2 style="margin-top:16px;">State Discretization (bins per dimension)</h2>
+      <div class="grid2">
+        <div class="slider-row">
+          <label>angle θ <span class="val" id="binThetaVal">6</span></label>
+          <input type="range" id="binTheta" min="2" max="12" step="1" value="6" />
+        </div>
+        <div class="slider-row">
+          <label>angular vel θ̇ <span class="val" id="binThetadotVal">3</span></label>
+          <input type="range" id="binThetadot" min="1" max="10" step="1" value="3" />
+        </div>
+        <div class="slider-row">
+          <label>position x <span class="val" id="binXVal">3</span></label>
+          <input type="range" id="binX" min="1" max="8" step="1" value="3" />
+        </div>
+        <div class="slider-row">
+          <label>velocity ẋ <span class="val" id="binXdotVal">3</span></label>
+          <input type="range" id="binXdot" min="1" max="8" step="1" value="3" />
+        </div>
+      </div>
+      <p style="font-size:11px; color:var(--text-dim); margin-top:-2px;">Changing bins resets the Q-table (state space size changes). Dropping x/ẋ to 1 bin each trains faster per-episode but the agent can no longer perceive drift toward the track edge — try it and watch the average get worse, not better.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Live Stats</h2>
+      <div class="readouts">
+        <div class="readout"><span class="k">Episodes trained</span><span class="v" id="rEpisodes">0</span></div>
+        <div class="readout"><span class="k">Current ε</span><span class="v" id="rEps">1.00</span></div>
+        <div class="readout"><span class="k">Best episode</span><span class="v" id="rBest">0 steps</span></div>
+        <div class="readout"><span class="k">Avg (last 20)</span><span class="v" id="rAvg">0.0</span></div>
+        <div class="readout"><span class="k">Q-table states</span><span class="v" id="rStates">—</span></div>
+        <div class="readout"><span class="k">Watch: steps survived</span><span class="v" id="rWatchSteps">—</span></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <details>
+        <summary>How this works</summary>
+        <p><b>Environment:</b> the classic CartPole-v1 setup — cart mass 1.0 kg, pole mass 0.1 kg, pole half-length 0.5 m, ±10 N bang-bang force, 0.02 s timestep, episode ends if the cart leaves ±2.4 m or the pole tips past ±12°, reward is +1 per surviving step, capped at 500 steps.</p>
+        <p><b>Discretization:</b> Q-learning needs a finite table, so each of the 4 continuous state variables is binned into buckets (sliders above). The 4 bin indices combine into one integer "box" — this is the classic Barto–Sutton–Anderson approach to making cart-pole tractable for a lookup-table method.</p>
+        <p><b>Update rule:</b> standard Q-learning — <code>Q(s,a) += α · (r + γ · max Q(s′,·) − Q(s,a))</code> — with ε-greedy action selection, ε decaying every episode so the agent explores early and exploits what it's learned later.</p>
+        <p><b>Try this:</b> train 20,000 episodes and Watch — the learning curve is noisy but trends up, and the agent should hold the pole for long stretches. Note how many episodes that took compared to LQR's instant, zero-trial solution in the Control Lab — that gap is the real cost of not having a model of the physics. Then drop x/ẋ bins to 1 and retrain: same episode budget, visibly worse ceiling, because the agent can no longer perceive drift toward the track edge.</p>
+      </details>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------- Physics (same verified nonlinear cart-pole model as the Control Lab) ----------
+  const G = 9.8;
+  const PARAMS = { M: 1.0, m: 0.1, l: 0.5 };
+  const FORCE_MAG = 10.0;
+  const DT = 0.02;
+  const X_THRESH = 2.4;
+  const THETA_THRESH = (12 * Math.PI) / 180;
+  const MAX_STEPS = 500;
+
+  function derivatives(state, F, p) {
+    const { theta, thetadot } = state;
+    const sinT = Math.sin(theta);
+    const cosT = Math.cos(theta);
+    const totalMass = p.M + p.m;
+    const temp = (F + p.m * p.l * thetadot * thetadot * sinT) / totalMass;
+    const thetaddot = (G * sinT - cosT * temp) / (p.l * (4 / 3 - (p.m * cosT * cosT) / totalMass));
+    const xddot = temp - (p.m * p.l * thetaddot * cosT) / totalMass;
+    return { xdot: state.xdot, xddot, thetadot: state.thetadot, thetaddot };
+  }
+  function addState(s, ds, h) {
+    return { x: s.x + h * ds.xdot, xdot: s.xdot + h * ds.xddot, theta: s.theta + h * ds.thetadot, thetadot: s.thetadot + h * ds.thetaddot };
+  }
+  function rk4Step(state, F, dt, p) {
+    const k1 = derivatives(state, F, p);
+    const k2 = derivatives(addState(state, k1, dt / 2), F, p);
+    const k3 = derivatives(addState(state, k2, dt / 2), F, p);
+    const k4 = derivatives(addState(state, k3, dt), F, p);
+    return {
+      x: state.x + (dt / 6) * (k1.xdot + 2 * k2.xdot + 2 * k3.xdot + k4.xdot),
+      xdot: state.xdot + (dt / 6) * (k1.xddot + 2 * k2.xddot + 2 * k3.xddot + k4.xddot),
+      theta: state.theta + (dt / 6) * (k1.thetadot + 2 * k2.thetadot + 2 * k3.thetadot + k4.thetadot),
+      thetadot: state.thetadot + (dt / 6) * (k1.thetaddot + 2 * k2.thetaddot + 2 * k3.thetaddot + k4.thetaddot),
+    };
+  }
+
+  function envReset() {
+    const r = () => (Math.random() - 0.5) * 0.1; // uniform in [-0.05, 0.05], classic gym init
+    return { x: r(), xdot: r(), theta: r(), thetadot: r() };
+  }
+  function envStep(state, actionIndex) {
+    const F = actionIndex === 1 ? FORCE_MAG : -FORCE_MAG;
+    const next = rk4Step(state, F, DT, PARAMS);
+    const done = Math.abs(next.x) > X_THRESH || Math.abs(next.theta) > THETA_THRESH;
+    return { state: next, reward: 1, done };
+  }
+
+  // ---------- Discretization ----------
+  function bins() {
+    return {
+      x: +document.getElementById('binX').value,
+      xdot: +document.getElementById('binXdot').value,
+      theta: +document.getElementById('binTheta').value,
+      thetadot: +document.getElementById('binThetadot').value,
+    };
+  }
+  const BOUNDS = { x: [-X_THRESH, X_THRESH], xdot: [-3, 3], theta: [-THETA_THRESH, THETA_THRESH], thetadot: [-3, 3] };
+
+  function binIndex(value, bounds, n) {
+    if (n <= 1) return 0;
+    const [lo, hi] = bounds;
+    const clipped = Math.max(lo, Math.min(hi - 1e-9, value));
+    const ratio = (clipped - lo) / (hi - lo);
+    return Math.min(n - 1, Math.max(0, Math.floor(ratio * n)));
+  }
+
+  let B = bins();
+  function discretize(state) {
+    const ix = binIndex(state.x, BOUNDS.x, B.x);
+    const ixd = binIndex(state.xdot, BOUNDS.xdot, B.xdot);
+    const it = binIndex(state.theta, BOUNDS.theta, B.theta);
+    const itd = binIndex(state.thetadot, BOUNDS.thetadot, B.thetadot);
+    return ((ix * B.xdot + ixd) * B.theta + it) * B.thetadot + itd;
+  }
+  function totalStates() { return B.x * B.xdot * B.theta * B.thetadot; }
+
+  // ---------- Q-table ----------
+  let Q = new Float64Array(totalStates() * 2);
+  let epsilon = 1.0;
+  let episodesTrained = 0;
+  let bestSteps = 0;
+  let recentLengths = [];
+  let learningCurve = []; // {ep, steps}
+
+  function resetQTable() {
+    B = bins();
+    Q = new Float64Array(totalStates() * 2);
+    epsilon = 1.0;
+    episodesTrained = 0;
+    bestSteps = 0;
+    recentLengths = [];
+    learningCurve = [];
+    document.getElementById('rStates').textContent = totalStates().toLocaleString();
+    updateStats();
+    drawChart();
+  }
+
+  function epsilonGreedy(discreteS) {
+    if (Math.random() < epsilon) return Math.random() < 0.5 ? 0 : 1;
+    return Q[discreteS * 2] >= Q[discreteS * 2 + 1] ? 0 : 1;
+  }
+  function greedyAction(discreteS) {
+    return Q[discreteS * 2] >= Q[discreteS * 2 + 1] ? 0 : 1;
+  }
+
+  function trainOneEpisode() {
+    const alpha = +document.getElementById('alpha').value;
+    const gamma = +document.getElementById('gamma').value;
+    const decay = +document.getElementById('decay').value;
+    const epsMin = +document.getElementById('epsMin').value;
+
+    let state = envReset();
+    let ds = discretize(state);
+    let steps = 0;
+    for (; steps < MAX_STEPS; steps++) {
+      const action = epsilonGreedy(ds);
+      const { state: next, reward, done } = envStep(state, action);
+      const ds2 = discretize(next);
+      const qIdx = ds * 2 + action;
+      const bestNext = done ? 0 : Math.max(Q[ds2 * 2], Q[ds2 * 2 + 1]);
+      Q[qIdx] += alpha * (reward + gamma * bestNext - Q[qIdx]);
+      state = next;
+      ds = ds2;
+      if (done) { steps++; break; }
+    }
+    epsilon = Math.max(epsMin, epsilon * decay);
+    episodesTrained++;
+    bestSteps = Math.max(bestSteps, steps);
+    recentLengths.push(steps);
+    if (recentLengths.length > 20) recentLengths.shift();
+    learningCurve.push({ ep: episodesTrained, steps });
+    if (learningCurve.length > 4000) learningCurve.shift();
+    return steps;
+  }
+
+  // ---------- Training control (chunked so UI stays responsive) ----------
+  let trainingActive = false;
+  async function trainEpisodes(n) {
+    trainingActive = true;
+    setTrainingUI(true);
+    const chunk = 25;
+    let done = 0;
+    while (done < n && trainingActive) {
+      const thisChunk = Math.min(chunk, n - done);
+      for (let i = 0; i < thisChunk; i++) trainOneEpisode();
+      done += thisChunk;
+      updateStats();
+      drawChart();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    trainingActive = false;
+    setTrainingUI(false);
+  }
+  function setTrainingUI(active) {
+    document.getElementById('statusPill').textContent = active ? 'Training…' : 'Idle';
+    document.getElementById('statusPill').className = 'status-pill ' + (active ? 'status-training' : 'status-ok');
+    ['btnTrain100', 'btnTrain1000', 'btnTrain5000', 'btnTrain20000', 'btnWatch', 'btnResetQ'].forEach((id) => (document.getElementById(id).disabled = active));
+    document.getElementById('btnStop').disabled = !active;
+  }
+
+  function updateStats() {
+    document.getElementById('epReadout').textContent = 'episode ' + episodesTrained;
+    document.getElementById('rEpisodes').textContent = episodesTrained.toLocaleString();
+    document.getElementById('rEps').textContent = epsilon.toFixed(3);
+    document.getElementById('rBest').textContent = bestSteps + ' steps';
+    const avg = recentLengths.length ? recentLengths.reduce((a, b) => a + b, 0) / recentLengths.length : 0;
+    document.getElementById('rAvg').textContent = avg.toFixed(1);
+    document.getElementById('rStates').textContent = totalStates().toLocaleString();
+  }
+
+  // ---------- Chart ----------
+  const chartCanvas = document.getElementById('chartCanvas');
+  const cctx = chartCanvas.getContext('2d');
+  function fitCanvas(canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    return dpr;
+  }
+  function drawChart() {
+    const dpr = fitCanvas(chartCanvas);
+    const w = chartCanvas.width, h = chartCanvas.height;
+    cctx.setTransform(1, 0, 0, 1, 0, 0);
+    cctx.clearRect(0, 0, w, h);
+    cctx.fillStyle = '#1a2133';
+    cctx.fillRect(0, 0, w, h);
+    const maxY = MAX_STEPS;
+    // gridline at max
+    cctx.strokeStyle = 'rgba(74,222,128,0.4)';
+    cctx.setLineDash([4 * dpr, 4 * dpr]);
+    cctx.beginPath();
+    cctx.moveTo(0, h - (maxY / maxY) * (h - 10 * dpr) - 5 * dpr);
+    cctx.lineTo(w, h - (maxY / maxY) * (h - 10 * dpr) - 5 * dpr);
+    cctx.stroke();
+    cctx.setLineDash([]);
+
+    if (learningCurve.length < 2) return;
+    const n = learningCurve.length;
+    const visible = n > 500 ? learningCurve.slice(n - 500) : learningCurve;
+    const epMin = visible[0].ep, epMax = visible[visible.length - 1].ep;
+    function xFor(ep) { return ((ep - epMin) / (epMax - epMin || 1)) * w; }
+    function yFor(steps) { return h - 5 * dpr - (Math.min(steps, maxY) / maxY) * (h - 10 * dpr); }
+
+    // raw
+    cctx.strokeStyle = '#3a4362';
+    cctx.lineWidth = 1 * dpr;
+    cctx.beginPath();
+    visible.forEach((pt, i) => { const px = xFor(pt.ep), py = yFor(pt.steps); if (i === 0) cctx.moveTo(px, py); else cctx.lineTo(px, py); });
+    cctx.stroke();
+
+    // rolling average (window 20)
+    const win = 20;
+    cctx.strokeStyle = '#c084fc';
+    cctx.lineWidth = 2.5 * dpr;
+    cctx.beginPath();
+    for (let i = 0; i < visible.length; i++) {
+      const start = Math.max(0, i - win + 1);
+      let sum = 0;
+      for (let j = start; j <= i; j++) sum += visible[j].steps;
+      const avg = sum / (i - start + 1);
+      const px = xFor(visible[i].ep), py = yFor(avg);
+      if (i === 0) cctx.moveTo(px, py); else cctx.lineTo(px, py);
+    }
+    cctx.stroke();
+  }
+
+  // ---------- Sim rendering (for "watch" mode) ----------
+  const simCanvas = document.getElementById('simCanvas');
+  const sctx = simCanvas.getContext('2d');
+  function drawSim(state, failed) {
+    const dpr = fitCanvas(simCanvas);
+    const w = simCanvas.width, h = simCanvas.height;
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.clearRect(0, 0, w, h);
+    sctx.fillStyle = '#1a2133';
+    sctx.fillRect(0, 0, w, h);
+    const groundY = h * 0.68;
+    const pxPerM = (w * 0.42) / X_THRESH;
+    sctx.strokeStyle = '#3a4362';
+    sctx.lineWidth = 3 * dpr;
+    sctx.beginPath();
+    sctx.moveTo(w / 2 - X_THRESH * pxPerM - 20 * dpr, groundY);
+    sctx.lineTo(w / 2 + X_THRESH * pxPerM + 20 * dpr, groundY);
+    sctx.stroke();
+    sctx.strokeStyle = '#f87171';
+    sctx.lineWidth = 2 * dpr;
+    [-X_THRESH, X_THRESH].forEach((b) => {
+      const bx = w / 2 + b * pxPerM;
+      sctx.beginPath();
+      sctx.moveTo(bx, groundY - 14 * dpr);
+      sctx.lineTo(bx, groundY + 14 * dpr);
+      sctx.stroke();
+    });
+    const cartX = w / 2 + state.x * pxPerM;
+    const cartW = 60 * dpr, cartH = 30 * dpr;
+    const poleLen = PARAMS.l * 2 * pxPerM;
+    const pivotX = cartX, pivotY = groundY - cartH / 2;
+    const tipX = pivotX + poleLen * Math.sin(state.theta);
+    const tipY = pivotY - poleLen * Math.cos(state.theta);
+    sctx.strokeStyle = failed ? '#f87171' : '#c084fc';
+    sctx.lineWidth = 6 * dpr;
+    sctx.lineCap = 'round';
+    sctx.beginPath();
+    sctx.moveTo(pivotX, pivotY);
+    sctx.lineTo(tipX, tipY);
+    sctx.stroke();
+    sctx.fillStyle = failed ? '#f87171' : '#c084fc';
+    sctx.beginPath();
+    sctx.arc(tipX, tipY, 7 * dpr, 0, Math.PI * 2);
+    sctx.fill();
+    sctx.fillStyle = '#5eb0ff';
+    sctx.beginPath();
+    sctx.roundRect ? sctx.roundRect(cartX - cartW / 2, groundY - cartH / 2, cartW, cartH, 6 * dpr) : sctx.rect(cartX - cartW / 2, groundY - cartH / 2, cartW, cartH);
+    sctx.fill();
+    sctx.fillStyle = '#0b0e14';
+    [cartX - cartW / 3, cartX + cartW / 3].forEach((wx) => { sctx.beginPath(); sctx.arc(wx, groundY + cartH / 2, 5 * dpr, 0, Math.PI * 2); sctx.fill(); });
+  }
+  function drawIdle() { drawSim({ x: 0, theta: 0 }, false); }
+
+  async function watchAgent() {
+    trainingActive = true; // reuse flag to disable buttons during watch
+    setTrainingUI(true);
+    document.getElementById('statusPill').textContent = 'Watching…';
+    let state = envReset();
+    let steps = 0;
+    let done = false;
+    while (!done && steps < MAX_STEPS && trainingActive) {
+      const ds = discretize(state);
+      const action = greedyAction(ds);
+      const result = envStep(state, action);
+      state = result.state;
+      done = result.done;
+      steps++;
+      drawSim(state, done);
+      document.getElementById('rWatchSteps').textContent = steps + ' / ' + MAX_STEPS;
+      await new Promise((r) => setTimeout(r, DT * 1000));
+    }
+    trainingActive = false;
+    setTrainingUI(false);
+  }
+
+  // ---------- Wiring ----------
+  function bindSlider(id, valId, fmt) {
+    const el = document.getElementById(id);
+    document.getElementById(valId).textContent = fmt(+el.value);
+    el.addEventListener('input', () => { document.getElementById(valId).textContent = fmt(+el.value); });
+  }
+  bindSlider('alpha', 'alphaVal', (v) => v.toFixed(2));
+  bindSlider('gamma', 'gammaVal', (v) => v.toFixed(3));
+  bindSlider('decay', 'decayVal', (v) => v.toFixed(4));
+  bindSlider('epsMin', 'epsMinVal', (v) => v.toFixed(2));
+  ['binTheta', 'binThetadot', 'binX', 'binXdot'].forEach((id) => {
+    document.getElementById(id).addEventListener('change', resetQTable);
+    bindSlider(id, id + 'Val', (v) => String(v));
+  });
+
+  document.getElementById('btnTrain100').addEventListener('click', () => trainEpisodes(100));
+  document.getElementById('btnTrain1000').addEventListener('click', () => trainEpisodes(1000));
+  document.getElementById('btnTrain5000').addEventListener('click', () => trainEpisodes(5000));
+  document.getElementById('btnTrain20000').addEventListener('click', () => trainEpisodes(20000));
+  document.getElementById('btnStop').addEventListener('click', () => { trainingActive = false; });
+  document.getElementById('btnWatch').addEventListener('click', watchAgent);
+  document.getElementById('btnResetQ').addEventListener('click', resetQTable);
+
+  resetQTable();
+  drawIdle();
+})();
+</script>
+</body>
+</html>
