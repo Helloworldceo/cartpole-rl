@@ -6,6 +6,33 @@ No install, no build step, no dependencies. It's a single HTML file — open it 
 
 ![Initial view](screenshots/1-initial.png)
 
+## How the pieces fit together
+
+The classic reinforcement-learning agent/environment loop, with the one extra step a tabular method needs — turning a continuous state into a finite table index:
+
+```mermaid
+flowchart LR
+    Env["Environment<br/>(cart-pole physics)"] -->|"state: x, ẋ, θ, θ̇"| Disc["Discretize into bins<br/>one integer index"]
+    Disc -->|"discrete state s"| Agent{"Agent<br/>(ε-greedy over Q-table)"}
+    Agent -->|"action: push left/right"| Env
+    Env -->|"reward +1 per step, done?"| Update["Update Q(s,a)"]
+    Update --> QTable[("Q-table")]
+    QTable --> Agent
+```
+
+One training episode, end to end:
+
+```mermaid
+flowchart TD
+    Reset(["Reset: random near-upright start"]) --> Choose["Choose action (ε-greedy)"]
+    Choose --> Step["Step physics one timestep"]
+    Step --> Learn["Update Q(s,a) toward r + γ·target(s')"]
+    Learn --> Done{"Pole fell, cart off<br/>track, or 500 steps?"}
+    Done -->|No| Choose
+    Done -->|Yes| DecayEps["Decay ε"]
+    DecayEps --> NextEp(["Next episode"])
+```
+
 ## Quick start
 
 1. Download or clone this repo.
@@ -65,15 +92,47 @@ Try this to feel the effect of state representation on what's learnable at all:
 - **γ (discount)** — how much future reward matters relative to immediate reward.
 - **ε decay** — how quickly the agent shifts from exploring randomly to exploiting what it's learned.
 
-## How it works
+## How it works, in detail
 
-- **Environment & physics**: the exact same verified nonlinear cart-pole RK4 simulation as the control-systems project (`derivatives` / `rk4Step`), just driven by two discrete actions (`+10N` / `-10N`) instead of a continuous force.
-- **Discretization**: each of the 4 continuous state variables is binned into buckets; the 4 bin indices combine into one integer "box" index — the same idea behind the classic Barto–Sutton–Anderson approach to making cart-pole tractable for a lookup-table method.
-- **Update rule**: Q-learning (off-policy), `Q(s,a) += α · (r + γ · max Q(s′,·) − Q(s,a))`, or SARSA (on-policy), `Q(s,a) += α · (r + γ · Q(s′,a′) − Q(s,a))` using the action ε-greedy selection actually picks next — both with ε-greedy action selection and ε decaying every episode.
-- **Policy map**: a direct read of the Q-table for a fixed position/velocity slice — no separate model, just coloring each angle/angular-velocity cell by `argmax` over its two action values.
-- **Save/load**: the Q-table, bin configuration, and training stats round-trip through `localStorage` as JSON.
+### Environment
 
-Everything lives in `index.html` with no external libraries — open it in a text editor to see exactly how it works.
+The exact same verified nonlinear cart-pole RK4 simulation as the control-systems project (`derivatives` / `rk4Step`), just driven by two discrete actions (`+10N` / `−10N`) instead of a continuous force, matching the classic **CartPole-v1** benchmark's parameters exactly (cart mass 1.0 kg, pole mass 0.1 kg, pole half-length 0.5 m, 0.02s timestep, ±2.4m / ±12° failure bounds, reward +1/step capped at 500).
+
+### Discretization
+
+A lookup table needs a finite number of rows, so each continuous state variable is binned:
+
+```
+index(v, lo, hi, n) = clamp(floor((v − lo) / (hi − lo) · n), 0, n−1)
+box(x, ẋ, θ, θ̇) = ((ix·n_ẋ + iẋ)·n_θ + iθ)·n_θ̇ + iθ̇
+```
+
+The four bin-count sliders directly set the table size — `n_x · n_ẋ · n_θ · n_θ̇ · 2 actions` total entries — this is the same "boxes" idea from the classic Barto–Sutton–Anderson (1983) cart-pole paper, the origin of tabular cart-pole control.
+
+### Update rules
+
+Both maintain a table `Q(s, a)` estimating expected future reward for taking action `a` in discretized state `s`, updated after every step:
+
+```
+Q-learning (off-policy):  Q(s,a) += α · ( r + γ · max_a' Q(s',a')  − Q(s,a) )
+SARSA (on-policy):        Q(s,a) += α · ( r + γ · Q(s', a'_actual) − Q(s,a) )
+```
+
+The difference is subtle but real: Q-learning always bootstraps off the **best** action it currently believes is available next — even though ε-greedy exploration means it won't always actually take it — so it's learning the value of the *optimal* policy while behaving semi-randomly. SARSA bootstraps off whatever action it **actually** selects next (chosen ε-greedily, before the update happens), so it's learning the value of the policy it's really following, exploration and all. In environments with a real risk of a costly mistake, this usually makes SARSA converge to a slightly more conservative policy than Q-learning.
+
+Action selection is ε-greedy: `random < ε` picks a uniformly random action, otherwise the action with the higher `Q(s,·)`. `ε` starts at 1.0 (always explore) and decays multiplicatively every episode toward a small floor, so exploration is heavy early and rare late.
+
+### Policy map
+
+A direct visualization of the Q-table, not a separate model: for cart position and velocity fixed at their middle bin, every `(θ, θ̇)` cell is colored by `argmax` over its two action values — literally reading off what the agent has decided is best in that situation, cell by cell.
+
+### Save/load
+
+The Q-table (as a plain array), bin configuration, algorithm choice, and training stats (episode count, ε, learning curve history) round-trip through `localStorage` as JSON under one key, so a save survives closing the tab.
+
+### Code layout
+
+Everything lives in `index.html` with no external dependencies. Top-to-bottom: `Physics → Environment (reset/step) → Discretization → Q-table & training loop → Chart rendering → Policy heatmap → Watch-mode rendering → Save/load → UI wiring`.
 
 ## Related projects
 
