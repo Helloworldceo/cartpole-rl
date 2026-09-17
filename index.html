@@ -126,6 +126,7 @@
         <select id="algo" style="width:100%; background:var(--panel-2); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:7px 10px; font-size:13px;">
           <option value="qlearning">Q-Learning (off-policy)</option>
           <option value="sarsa">SARSA (on-policy)</option>
+          <option value="dqn">DQN (neural network)</option>
         </select>
       </div>
       <div class="slider-row">
@@ -145,26 +146,29 @@
         <input type="range" id="epsMin" min="0" max="0.3" step="0.01" value="0.02" />
       </div>
 
-      <h2 style="margin-top:16px;">State Discretization (bins per dimension)</h2>
-      <div class="grid2">
-        <div class="slider-row">
-          <label>angle θ <span class="val" id="binThetaVal">6</span></label>
-          <input type="range" id="binTheta" min="2" max="12" step="1" value="6" />
+      <div id="discretizationPanel">
+        <h2 style="margin-top:16px;">State Discretization (bins per dimension)</h2>
+        <div class="grid2">
+          <div class="slider-row">
+            <label>angle θ <span class="val" id="binThetaVal">6</span></label>
+            <input type="range" id="binTheta" min="2" max="12" step="1" value="6" />
+          </div>
+          <div class="slider-row">
+            <label>angular vel θ̇ <span class="val" id="binThetadotVal">3</span></label>
+            <input type="range" id="binThetadot" min="1" max="10" step="1" value="3" />
+          </div>
+          <div class="slider-row">
+            <label>position x <span class="val" id="binXVal">3</span></label>
+            <input type="range" id="binX" min="1" max="8" step="1" value="3" />
+          </div>
+          <div class="slider-row">
+            <label>velocity ẋ <span class="val" id="binXdotVal">3</span></label>
+            <input type="range" id="binXdot" min="1" max="8" step="1" value="3" />
+          </div>
         </div>
-        <div class="slider-row">
-          <label>angular vel θ̇ <span class="val" id="binThetadotVal">3</span></label>
-          <input type="range" id="binThetadot" min="1" max="10" step="1" value="3" />
-        </div>
-        <div class="slider-row">
-          <label>position x <span class="val" id="binXVal">3</span></label>
-          <input type="range" id="binX" min="1" max="8" step="1" value="3" />
-        </div>
-        <div class="slider-row">
-          <label>velocity ẋ <span class="val" id="binXdotVal">3</span></label>
-          <input type="range" id="binXdot" min="1" max="8" step="1" value="3" />
-        </div>
+        <p style="font-size:11px; color:var(--text-dim); margin-top:-2px;">Changing bins resets the Q-table (state space size changes). Dropping x/ẋ to 1 bin each trains faster per-episode but the agent can no longer perceive drift toward the track edge — try it and watch the average get worse, not better.</p>
       </div>
-      <p style="font-size:11px; color:var(--text-dim); margin-top:-2px;">Changing bins resets the Q-table (state space size changes). Dropping x/ẋ to 1 bin each trains faster per-episode but the agent can no longer perceive drift toward the track edge — try it and watch the average get worse, not better.</p>
+      <p id="dqnNote" style="display:none; font-size:11px; color:var(--text-dim);">DQN takes the continuous state directly — no discretization needed. A small neural network (4 → 32 → 2, ReLU) replaces the table entirely.</p>
     </div>
 
     <div class="panel">
@@ -174,7 +178,8 @@
         <div class="readout"><span class="k">Current ε</span><span class="v" id="rEps">1.00</span></div>
         <div class="readout"><span class="k">Best episode</span><span class="v" id="rBest">0 steps</span></div>
         <div class="readout"><span class="k">Avg (last 20)</span><span class="v" id="rAvg">0.0</span></div>
-        <div class="readout"><span class="k">Q-table states</span><span class="v" id="rStates">—</span></div>
+        <div class="readout" id="statesReadout"><span class="k">Q-table states</span><span class="v" id="rStates">—</span></div>
+        <div class="readout" id="bestCheckpointReadout" style="display:none;"><span class="k">Best checkpoint (eval)</span><span class="v" id="rBestCheckpoint">—</span></div>
         <div class="readout"><span class="k">Watch: steps survived</span><span class="v" id="rWatchSteps">—</span></div>
       </div>
     </div>
@@ -185,8 +190,9 @@
         <p><b>Environment:</b> the classic CartPole-v1 setup — cart mass 1.0 kg, pole mass 0.1 kg, pole half-length 0.5 m, ±10 N bang-bang force, 0.02 s timestep, episode ends if the cart leaves ±2.4 m or the pole tips past ±12°, reward is +1 per surviving step, capped at 500 steps.</p>
         <p><b>Discretization:</b> Q-learning needs a finite table, so each of the 4 continuous state variables is binned into buckets (sliders above). The 4 bin indices combine into one integer "box" — this is the classic Barto–Sutton–Anderson approach to making cart-pole tractable for a lookup-table method.</p>
         <p><b>Update rule:</b> two on-offer. <b>Q-learning</b> (off-policy) — <code>Q(s,a) += α · (r + γ · max Q(s′,·) − Q(s,a))</code> — always bootstraps off the best action it currently believes is available in the next state, even though ε-greedy exploration means it won't always actually take that action. <b>SARSA</b> (on-policy) — <code>Q(s,a) += α · (r + γ · Q(s′,a′) − Q(s,a))</code> — bootstraps off whatever action it actually selects next (including random exploratory ones), so it learns the value of the policy it's really following, exploration and all. In practice SARSA tends to learn a slightly more "cautious" policy since it accounts for its own chance of exploring into a bad state.</p>
-        <p><b>Policy map:</b> for a fixed cart position and velocity (the middle bin of each), it colors every angle/angular-velocity combination by which action the agent currently prefers there. Early in training this is mostly dark (unvisited); as training progresses you should see it resolve into a clean left/right pattern that looks a lot like "push whichever way stops it tipping further" — the policy an engineer would have hand-designed, discovered from scratch by trial and error.</p>
-        <p><b>Try this:</b> train 20,000 episodes and Watch — the learning curve is noisy but trends up, and the agent should hold the pole for long stretches. Note how many episodes that took compared to LQR's instant, zero-trial solution in the Control Lab — that gap is the real cost of not having a model of the physics. Then drop x/ẋ bins to 1 and retrain: same episode budget, visibly worse ceiling, because the agent can no longer perceive drift toward the track edge. Or train the same episode budget under Q-learning vs. SARSA and compare their learning curves and final policy maps directly.</p>
+        <p><b>Policy map:</b> for a fixed cart position and velocity (the middle bin of each, or exactly 0 for DQN), it colors every angle/angular-velocity combination by which action the agent currently prefers there. Early in training this is mostly dark (unvisited, tabular methods only); as training progresses you should see it resolve into a clean left/right pattern that looks a lot like "push whichever way stops it tipping further" — the policy an engineer would have hand-designed, discovered from scratch by trial and error.</p>
+        <p><b>DQN:</b> a small neural network (4 inputs → 32 hidden units with ReLU → 2 output Q-values, all hand-rolled with manual backpropagation, no libraries) replaces the table, taking the raw continuous state directly — no discretization, no lost information at the track edges. It trains with the standard stabilization tricks real DQN implementations use: an <b>experience replay buffer</b> (train on random past transitions, not just the most recent one, to break correlation between consecutive samples), a separate slowly-updated <b>target network</b> for computing update targets (prevents the network from chasing its own rapidly-moving predictions), and <b>Double DQN</b> (pick the best next action with the online network but evaluate it with the target network, which fixes a known overoptimism bias in vanilla DQN). Even with all of that, function-approximation RL is genuinely less stable than a lookup table — watch the "Best checkpoint" stat versus the live episode length: it's common for DQN to reach a great policy mid-training and then destabilize away from it later, which is why the app keeps a snapshot of the best network it's seen (evaluated every 25 episodes) and uses <i>that</i> for Watch, not necessarily whatever the network currently is. That instability isn't a bug in this implementation — it's a real, still-researched property of value-based deep RL.</p>
+        <p><b>Try this:</b> train 20,000 episodes and Watch — the learning curve is noisy but trends up, and the agent should hold the pole for long stretches. Note how many episodes that took compared to LQR's instant, zero-trial solution in the Control Lab — that gap is the real cost of not having a model of the physics. Then drop x/ẋ bins to 1 and retrain: same episode budget, visibly worse ceiling, because the agent can no longer perceive drift toward the track edge. Or train the same episode budget under Q-learning vs. SARSA vs. DQN and compare their learning curves directly — and watch DQN's live episode length wander after it's already found a good policy, while its saved best-checkpoint score doesn't.</p>
       </details>
     </div>
   </div>
@@ -270,6 +276,124 @@
     return ((ix * B.xdot + ixd) * B.theta + it) * B.thetadot + itd;
   }
   function totalStates() { return B.x * B.xdot * B.theta * B.thetadot; }
+  function normalizeState(s) { return [s.x / X_THRESH, s.xdot / 3, s.theta / THETA_THRESH, s.thetadot / 3]; }
+
+  // ---------- DQN: a tiny hand-rolled MLP (4 -> 32 -> 2), manual backprop ----------
+  const DQN_HIDDEN = 32;
+  function randInit(n, scale) { return Array.from({ length: n }, () => (Math.random() * 2 - 1) * scale); }
+  function makeNet() {
+    return {
+      W1: Array.from({ length: DQN_HIDDEN }, () => randInit(4, Math.sqrt(2 / 4))),
+      b1: new Array(DQN_HIDDEN).fill(0),
+      W2: Array.from({ length: 2 }, () => randInit(DQN_HIDDEN, Math.sqrt(2 / DQN_HIDDEN))),
+      b2: new Array(2).fill(0),
+    };
+  }
+  function cloneNet(net) {
+    return { W1: net.W1.map((r) => r.slice()), b1: net.b1.slice(), W2: net.W2.map((r) => r.slice()), b2: net.b2.slice() };
+  }
+  function forwardNet(net, x) {
+    const z1 = net.W1.map((row, i) => row[0] * x[0] + row[1] * x[1] + row[2] * x[2] + row[3] * x[3] + net.b1[i]);
+    const h = z1.map((v) => Math.max(0, v));
+    const q = net.W2.map((row, i) => row.reduce((s, w, j) => s + w * h[j], 0) + net.b2[i]);
+    return { x, z1, h, q };
+  }
+  function sgdStepNet(net, cache, action, target, lr) {
+    const { x, z1, h, q } = cache;
+    const dq = [0, 0];
+    dq[action] = 2 * (q[action] - target);
+    for (let i = 0; i < 2; i++) {
+      for (let j = 0; j < DQN_HIDDEN; j++) net.W2[i][j] -= lr * dq[i] * h[j];
+      net.b2[i] -= lr * dq[i];
+    }
+    const dh = new Array(DQN_HIDDEN).fill(0);
+    for (let j = 0; j < DQN_HIDDEN; j++) dh[j] = net.W2[action][j] * dq[action];
+    const dz1 = dh.map((v, j) => (z1[j] > 0 ? v : 0));
+    for (let i = 0; i < DQN_HIDDEN; i++) {
+      for (let j = 0; j < 4; j++) net.W1[i][j] -= lr * dz1[i] * x[j];
+      net.b1[i] -= lr * dz1[i];
+    }
+  }
+  function evalGreedy(net, trials) {
+    let total = 0;
+    for (let t = 0; t < trials; t++) {
+      let state = envReset();
+      let steps = 0;
+      for (; steps < MAX_STEPS; steps++) {
+        const q = forwardNet(net, normalizeState(state)).q;
+        const { state: next, done } = envStep(state, q[0] >= q[1] ? 0 : 1);
+        state = next;
+        if (done) { steps++; break; }
+      }
+      total += steps;
+    }
+    return total / trials;
+  }
+
+  const DQN_BUFFER_CAP = 8000, DQN_BATCH = 32, DQN_TARGET_SYNC = 300;
+  let dqnNet, dqnTargetNet, dqnBestNet, dqnBestScore, dqnBuffer, dqnBufIdx, dqnStepCount;
+  function resetDQN() {
+    dqnNet = makeNet();
+    dqnTargetNet = cloneNet(dqnNet);
+    dqnBestNet = cloneNet(dqnNet);
+    dqnBestScore = -1;
+    dqnBuffer = [];
+    dqnBufIdx = 0;
+    dqnStepCount = 0;
+    document.getElementById('rBestCheckpoint').textContent = '—';
+  }
+
+  function trainOneEpisodeDQN() {
+    const lr = +document.getElementById('alpha').value;
+    const gamma = +document.getElementById('gamma').value;
+    const decay = +document.getElementById('decay').value;
+    const epsMin = +document.getElementById('epsMin').value;
+
+    let state = envReset();
+    let steps = 0;
+    for (; steps < MAX_STEPS; steps++) {
+      const xvec = normalizeState(state);
+      const cache = forwardNet(dqnNet, xvec);
+      const action = Math.random() < epsilon ? (Math.random() < 0.5 ? 0 : 1) : cache.q[0] >= cache.q[1] ? 0 : 1;
+      const { state: next, reward, done } = envStep(state, action);
+      const transition = { x: xvec, action, reward, xNext: normalizeState(next), done };
+      if (dqnBuffer.length < DQN_BUFFER_CAP) dqnBuffer.push(transition);
+      else dqnBuffer[dqnBufIdx] = transition;
+      dqnBufIdx = (dqnBufIdx + 1) % DQN_BUFFER_CAP;
+
+      if (dqnBuffer.length >= DQN_BATCH) {
+        for (let b = 0; b < DQN_BATCH; b++) {
+          const t = dqnBuffer[Math.floor(Math.random() * dqnBuffer.length)];
+          const cacheB = forwardNet(dqnNet, t.x);
+          const onlineNext = forwardNet(dqnNet, t.xNext).q; // Double DQN: pick with online net...
+          const bestA = onlineNext[0] >= onlineNext[1] ? 0 : 1;
+          const targetNext = forwardNet(dqnTargetNet, t.xNext).q[bestA]; // ...evaluate with target net
+          const target = t.done ? t.reward : t.reward + gamma * targetNext;
+          sgdStepNet(dqnNet, cacheB, t.action, target, lr / DQN_BATCH);
+        }
+      }
+      dqnStepCount++;
+      if (dqnStepCount % DQN_TARGET_SYNC === 0) dqnTargetNet = cloneNet(dqnNet);
+      state = next;
+      if (done) { steps++; break; }
+    }
+    epsilon = Math.max(epsMin, epsilon * decay);
+    episodesTrained++;
+    bestSteps = Math.max(bestSteps, steps);
+    recentLengths.push(steps);
+    if (recentLengths.length > 20) recentLengths.shift();
+    learningCurve.push({ ep: episodesTrained, steps });
+    if (learningCurve.length > 4000) learningCurve.shift();
+    if (episodesTrained % 25 === 0) {
+      const score = evalGreedy(dqnNet, 3);
+      if (score > dqnBestScore) {
+        dqnBestScore = score;
+        dqnBestNet = cloneNet(dqnNet);
+        document.getElementById('rBestCheckpoint').textContent = score.toFixed(0) + ' steps';
+      }
+    }
+    return steps;
+  }
 
   // ---------- Q-table ----------
   let Q = new Float64Array(totalStates() * 2);
@@ -279,6 +403,8 @@
   let recentLengths = [];
   let learningCurve = []; // {ep, steps}
 
+  function isDQN() { return document.getElementById('algo').value === 'dqn'; }
+
   function resetQTable() {
     B = bins();
     Q = new Float64Array(totalStates() * 2);
@@ -287,7 +413,12 @@
     bestSteps = 0;
     recentLengths = [];
     learningCurve = [];
+    resetDQN();
     document.getElementById('rStates').textContent = totalStates().toLocaleString();
+    document.getElementById('discretizationPanel').style.display = isDQN() ? 'none' : 'block';
+    document.getElementById('dqnNote').style.display = isDQN() ? 'block' : 'none';
+    document.getElementById('statesReadout').style.display = isDQN() ? 'none' : 'block';
+    document.getElementById('bestCheckpointReadout').style.display = isDQN() ? 'block' : 'none';
     updateStats();
     drawChart();
     drawPolicyHeatmap();
@@ -302,6 +433,7 @@
   }
 
   function trainOneEpisode() {
+    if (isDQN()) return trainOneEpisodeDQN();
     const alpha = +document.getElementById('alpha').value;
     const gamma = +document.getElementById('gamma').value;
     const decay = +document.getElementById('decay').value;
@@ -442,11 +574,25 @@
     pctx.clearRect(0, 0, w, h);
     pctx.fillStyle = '#1a2133';
     pctx.fillRect(0, 0, w, h);
+    const gap = Math.max(1, 1 * dpr);
+    if (isDQN()) {
+      const cols = 24, rows = 24; // continuous, so sample a fine grid instead of the bin count
+      const cellW = w / cols, cellH = h / rows;
+      for (let ic = 0; ic < cols; ic++) {
+        for (let ir = 0; ir < rows; ir++) {
+          const theta = -THETA_THRESH + ((ic + 0.5) / cols) * 2 * THETA_THRESH;
+          const thetadot = -3 + ((ir + 0.5) / rows) * 6;
+          const q = forwardNet(dqnNet, [0, 0, theta / THETA_THRESH, thetadot / 3]).q;
+          pctx.fillStyle = q[1] > q[0] ? '#fb923c' : '#5eb0ff';
+          pctx.fillRect(ic * cellW, h - (ir + 1) * cellH, cellW - gap, cellH - gap);
+        }
+      }
+      return;
+    }
     const ixCenter = Math.floor(B.x / 2);
     const ixdCenter = Math.floor(B.xdot / 2);
     const cellW = w / B.theta;
     const cellH = h / B.thetadot;
-    const gap = Math.max(1, 1 * dpr);
     for (let it = 0; it < B.theta; it++) {
       for (let itd = 0; itd < B.thetadot; itd++) {
         const ds = ((ixCenter * B.xdot + ixdCenter) * B.theta + it) * B.thetadot + itd;
@@ -522,8 +668,14 @@
     let steps = 0;
     let done = false;
     while (!done && steps < MAX_STEPS && trainingActive) {
-      const ds = discretize(state);
-      const action = greedyAction(ds);
+      let action;
+      if (isDQN()) {
+        const net = dqnBestScore >= 0 ? dqnBestNet : dqnNet;
+        const q = forwardNet(net, normalizeState(state)).q;
+        action = q[0] >= q[1] ? 0 : 1;
+      } else {
+        action = greedyAction(discretize(state));
+      }
       const result = envStep(state, action);
       state = result.state;
       done = result.done;
@@ -541,6 +693,7 @@
   function saveQTable() {
     try {
       const data = { B, Q: Array.from(Q), epsilon, episodesTrained, bestSteps, recentLengths, learningCurve, algo: document.getElementById('algo').value };
+      if (isDQN()) Object.assign(data, { dqnNet, dqnTargetNet, dqnBestNet, dqnBestScore });
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
       document.getElementById('saveLoadMsg').textContent = `Saved (${episodesTrained.toLocaleString()} episodes).`;
     } catch (e) {
@@ -565,6 +718,17 @@
         document.getElementById(id + 'Val').textContent = String(B[key]);
       });
       if (data.algo) document.getElementById('algo').value = data.algo;
+      if (data.dqnNet) {
+        dqnNet = data.dqnNet;
+        dqnTargetNet = data.dqnTargetNet;
+        dqnBestNet = data.dqnBestNet;
+        dqnBestScore = data.dqnBestScore;
+        document.getElementById('rBestCheckpoint').textContent = dqnBestScore >= 0 ? dqnBestScore.toFixed(0) + ' steps' : '—';
+      }
+      document.getElementById('discretizationPanel').style.display = isDQN() ? 'none' : 'block';
+      document.getElementById('dqnNote').style.display = isDQN() ? 'block' : 'none';
+      document.getElementById('statesReadout').style.display = isDQN() ? 'none' : 'block';
+      document.getElementById('bestCheckpointReadout').style.display = isDQN() ? 'block' : 'none';
       updateStats();
       drawChart();
       drawPolicyHeatmap();

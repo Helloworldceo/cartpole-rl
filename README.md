@@ -1,6 +1,6 @@
 # Cart-Pole RL Lab
 
-The same cart-pole balancing problem as [cartpole-control](../cartpole-control) — but this time nothing is told how the physics works. A tabular **Q-learning** agent starts knowing nothing and has to discover a balancing policy purely from trial and error, guided by nothing more than +1 reward per surviving timestep.
+The same cart-pole balancing problem as [cartpole-control](../cartpole-control) — but this time nothing is told how the physics works. Three learning algorithms — tabular **Q-learning**, tabular **SARSA**, and a small hand-rolled neural network (**DQN**) — start knowing nothing and have to discover a balancing policy purely from trial and error, guided by nothing more than +1 reward per surviving timestep.
 
 No install, no build step, no dependencies. It's a single HTML file — open it and it runs.
 
@@ -68,25 +68,35 @@ Below the learning curve, the **Policy Map** shows exactly what the agent has le
 
 ### 4. Compare Q-learning against SARSA
 
-The **Algorithm** dropdown switches between two update rules (switching resets the Q-table for a fair comparison):
+The **Algorithm** dropdown switches between update rules (switching resets the current agent for a fair comparison):
 
 - **Q-learning** (off-policy) always bootstraps off the best action it currently believes is available next, regardless of whether ε-greedy exploration will actually take it.
 - **SARSA** (on-policy) bootstraps off whatever action it actually selects next — including random exploratory moves — so it learns the value of the policy it's really following, exploration and all, and tends to come out a bit more conservative.
 
 Train the same episode budget under each and compare the learning curves and final policy maps.
 
-### 5. Save and reload progress
+### 5. Try DQN — and watch it destabilize
+
+Switch **Algorithm** to **DQN**. The state discretization panel disappears (DQN takes the raw continuous state directly — no bins, no lost information at the track edges) and a small neural network takes over: 4 inputs → 32 hidden units (ReLU) → 2 output Q-values, trained with experience replay, a target network, and Double DQN — the standard modern stabilization stack, all hand-rolled with manual backpropagation, no libraries.
+
+Train a few thousand episodes and watch the **live** episode length and the **Best checkpoint (eval)** stat side by side:
+
+![DQN after training — live policy has collapsed, but the best checkpoint (500) is intact](screenshots/5-dqn-trained.png)
+
+It's common to see the live average crash back down after the agent has already found a great policy — this is a real, well-documented instability in value-based deep RL, not a bug in this implementation (Double DQN, experience replay, and a target network all help, but don't eliminate it). That's exactly why the app evaluates the greedy policy every 25 episodes and keeps a snapshot whenever it improves: **Watch trained agent** always uses that saved best network, not whatever the live one currently is. Click Watch after a training run where the live average looks terrible — it'll very likely still balance perfectly.
+
+### 6. Save and reload progress
 
 **Save Q-table** stores the current table, bin configuration, and stats in your browser's local storage; **Load Q-table** restores them, even after a page reload. Handy for picking up a long training run later, or for saving a good policy before experimenting with settings you might want to undo.
 
-### 6. Break it on purpose
+### 7. Break it on purpose
 
 Try this to feel the effect of state representation on what's learnable at all:
 
 - Drop the **position x** and **velocity ẋ** bins down to 1 each and retrain from scratch (**Reset Q-table**, then train again). The agent can no longer perceive drift toward the track edge at all — watch the average *get worse*, not better, no matter how long you train. This isn't a slower learner; it's an agent that's blind to information it needs.
 - Compare the number of episodes this takes to reach a decent policy against how instantly [cartpole-control](../cartpole-control)'s LQR controller solves the identical physical system with a few matrix operations. That gap — thousands of trial-and-error episodes versus one closed-form linear-algebra solve — is the real, practical cost of not having a model of your environment.
 
-### 7. Tune the learning itself
+### 8. Tune the learning itself
 
 - **α (learning rate)** — how much each new experience overwrites the old estimate. Too high and learning is noisy; too low and it's painfully slow.
 - **γ (discount)** — how much future reward matters relative to immediate reward.
@@ -122,17 +132,27 @@ The difference is subtle but real: Q-learning always bootstraps off the **best**
 
 Action selection is ε-greedy: `random < ε` picks a uniformly random action, otherwise the action with the higher `Q(s,·)`. `ε` starts at 1.0 (always explore) and decays multiplicatively every episode toward a small floor, so exploration is heavy early and rare late.
 
+### DQN
+
+Replaces the table with a function approximator: a tiny multilayer perceptron, `4 inputs → 32 hidden (ReLU) → 2 outputs (Q-values)`, with every weight and the full forward/backward pass hand-written (no autodiff library — this project keeps the "no dependencies" rule even here). Three standard stabilization techniques are layered on top of the basic idea, because naive online DQN on this problem is visibly unstable without them:
+
+- **Experience replay** — every transition `(s, a, r, s', done)` goes into a fixed-size circular buffer; each training step samples a random minibatch from it instead of training only on the most recent (highly correlated) transition.
+- **Target network** — a second copy of the network, frozen for a stretch of steps, supplies the `max`/bootstrapped value in the training target, so the network isn't chasing a target that moves every time it updates.
+- **Double DQN** — the *online* network picks which next action looks best, but the *target* network supplies that action's value: `target = r + γ · Q_target(s', argmax_a Q_online(s', a))`. This specifically corrects a known overestimation bias in vanilla DQN (Q-learning's `max` operator tends to systematically overestimate values under function approximation).
+
+Even with all three, training is genuinely less stable than the tabular case — in testing, this exact setup could reach a perfect 500-step policy by episode ~500 and then destabilize back down to single digits by episode ~1000, entirely from continued training on its own (by-then very repetitive) replay buffer. Rather than fight that instability away entirely (a deep, still-active area of RL research), the app works with it honestly: it evaluates the greedy policy every 25 episodes with 3 short deterministic rollouts, and keeps a full snapshot of the network whenever that evaluation score improves. **Watch trained agent** always loads that saved snapshot, not the live network — so a good policy found mid-training is never lost even if training continues past it.
+
 ### Policy map
 
-A direct visualization of the Q-table, not a separate model: for cart position and velocity fixed at their middle bin, every `(θ, θ̇)` cell is colored by `argmax` over its two action values — literally reading off what the agent has decided is best in that situation, cell by cell.
+For Q-learning/SARSA, a direct visualization of the Q-table: for cart position and velocity fixed at their middle bin, every `(θ, θ̇)` cell is colored by `argmax` over its two action values. DQN has no table to read, so the same picture is built by sampling a 24×24 grid of `(θ, θ̇)` points (position/velocity fixed at exactly 0) and running each one through the network's forward pass — same visualization, different data source.
 
 ### Save/load
 
-The Q-table (as a plain array), bin configuration, algorithm choice, and training stats (episode count, ε, learning curve history) round-trip through `localStorage` as JSON under one key, so a save survives closing the tab.
+The current agent's state round-trips through `localStorage` as JSON under one key: for Q-learning/SARSA that's the table and bin configuration; for DQN it's all three network snapshots (online, target, and best-checkpoint) plus its evaluation score — alongside the shared training stats (episode count, ε, learning curve history) either way.
 
 ### Code layout
 
-Everything lives in `index.html` with no external dependencies. Top-to-bottom: `Physics → Environment (reset/step) → Discretization → Q-table & training loop → Chart rendering → Policy heatmap → Watch-mode rendering → Save/load → UI wiring`.
+Everything lives in `index.html` with no external dependencies. Top-to-bottom: `Physics → Environment (reset/step) → Discretization → DQN network & training loop → Q-table & training loop → Chart rendering → Policy heatmap → Watch-mode rendering → Save/load → UI wiring`.
 
 ## Related projects
 
