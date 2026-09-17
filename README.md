@@ -33,14 +33,33 @@ Click **▶ Watch trained agent** to run one real-time episode using the agent's
 
 ![Watching a trained agent balance the pole](screenshots/3-watch-agent.png)
 
-### 3. Break it on purpose
+### 3. Look at the policy map
+
+Below the learning curve, the **Policy Map** shows exactly what the agent has learned: for cart position and velocity held at their middle bin, it colors every angle/angular-velocity combination by which action (push left or push right) the agent currently prefers there. Early on it's mostly dark (unvisited); after a few thousand episodes it resolves into a clean pattern — a diagonal-ish split from "push left" when tilted left to "push right" when tilted right, which is roughly the same bang-bang heuristic an engineer would hand-design.
+
+![The learned policy: push-left/push-right by angle and angular velocity](screenshots/4-policy-map.png)
+
+### 4. Compare Q-learning against SARSA
+
+The **Algorithm** dropdown switches between two update rules (switching resets the Q-table for a fair comparison):
+
+- **Q-learning** (off-policy) always bootstraps off the best action it currently believes is available next, regardless of whether ε-greedy exploration will actually take it.
+- **SARSA** (on-policy) bootstraps off whatever action it actually selects next — including random exploratory moves — so it learns the value of the policy it's really following, exploration and all, and tends to come out a bit more conservative.
+
+Train the same episode budget under each and compare the learning curves and final policy maps.
+
+### 5. Save and reload progress
+
+**Save Q-table** stores the current table, bin configuration, and stats in your browser's local storage; **Load Q-table** restores them, even after a page reload. Handy for picking up a long training run later, or for saving a good policy before experimenting with settings you might want to undo.
+
+### 6. Break it on purpose
 
 Try this to feel the effect of state representation on what's learnable at all:
 
 - Drop the **position x** and **velocity ẋ** bins down to 1 each and retrain from scratch (**Reset Q-table**, then train again). The agent can no longer perceive drift toward the track edge at all — watch the average *get worse*, not better, no matter how long you train. This isn't a slower learner; it's an agent that's blind to information it needs.
 - Compare the number of episodes this takes to reach a decent policy against how instantly [cartpole-control](../cartpole-control)'s LQR controller solves the identical physical system with a few matrix operations. That gap — thousands of trial-and-error episodes versus one closed-form linear-algebra solve — is the real, practical cost of not having a model of your environment.
 
-### 4. Tune the learning itself
+### 7. Tune the learning itself
 
 - **α (learning rate)** — how much each new experience overwrites the old estimate. Too high and learning is noisy; too low and it's painfully slow.
 - **γ (discount)** — how much future reward matters relative to immediate reward.
@@ -50,7 +69,9 @@ Try this to feel the effect of state representation on what's learnable at all:
 
 - **Environment & physics**: the exact same verified nonlinear cart-pole RK4 simulation as the control-systems project (`derivatives` / `rk4Step`), just driven by two discrete actions (`+10N` / `-10N`) instead of a continuous force.
 - **Discretization**: each of the 4 continuous state variables is binned into buckets; the 4 bin indices combine into one integer "box" index — the same idea behind the classic Barto–Sutton–Anderson approach to making cart-pole tractable for a lookup-table method.
-- **Update rule**: standard Q-learning, `Q(s,a) += α · (r + γ · max Q(s′,·) − Q(s,a))`, with ε-greedy action selection.
+- **Update rule**: Q-learning (off-policy), `Q(s,a) += α · (r + γ · max Q(s′,·) − Q(s,a))`, or SARSA (on-policy), `Q(s,a) += α · (r + γ · Q(s′,a′) − Q(s,a))` using the action ε-greedy selection actually picks next — both with ε-greedy action selection and ε decaying every episode.
+- **Policy map**: a direct read of the Q-table for a fixed position/velocity slice — no separate model, just coloring each angle/angular-velocity cell by `argmax` over its two action values.
+- **Save/load**: the Q-table, bin configuration, and training stats round-trip through `localStorage` as JSON.
 
 Everything lives in `index.html` with no external libraries — open it in a text editor to see exactly how it works.
 
